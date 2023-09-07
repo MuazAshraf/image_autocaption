@@ -3,6 +3,7 @@ from werkzeug.utils import secure_filename
 from PIL import Image
 from transformers import BlipProcessor, BlipForConditionalGeneration
 import os
+import piexif
 
 app = Flask(__name__)
 
@@ -17,7 +18,24 @@ model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-capt
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+def set_caption(image_path, caption):
+    # Open the image
+    image = Image.open(image_path)
 
+    # Check if the image has EXIF data
+    if "exif" in image.info:
+        exif_dict = piexif.load(image.info["exif"])
+    else:
+        exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}}
+
+    # Add the caption to the 'ImageDescription' field
+    exif_dict["0th"][piexif.ImageIFD.ImageDescription] = caption.encode("utf-8")
+
+    # Convert the Exif data back to bytes
+    exif_bytes = piexif.dump(exif_dict)
+
+    # Save the image with the updated Exif data
+    image.save(image_path, exif=exif_bytes)
 @app.route('/generate-caption', methods=['POST'])
 def generate_caption():
     print(request.files.keys())
@@ -39,7 +57,14 @@ def generate_caption():
         out = model.generate(**inputs)
         caption = processor.decode(out[0], skip_special_tokens=True)
 
-        return jsonify({"caption": caption})
+        # Store the caption in the image's metadata
+        set_caption(file_path, caption)
+
+        return jsonify({
+        "caption": caption,
+        "message": "Caption has been stored in the image's metadata."
+        })
+
 
     return jsonify({"error": "Invalid file format"}), 400
 
